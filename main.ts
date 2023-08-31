@@ -1,4 +1,17 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, ItemView } from 'obsidian';
+
+const CoPilotViewType: string = 'copilot';
+const CoPilotViewDescription: string = 'Chat';
+
+class RecentFilesListView extends ItemView {
+	public getViewType(): string {
+		return CoPilotViewType;
+	}
+
+	public getDisplayText(): string {
+		return CoPilotViewDescription;
+	}
+}
 
 // Remember to rename these classes and interfaces!
 
@@ -17,16 +30,16 @@ export default class MyPlugin extends Plugin {
 		await this.loadSettings();
 
 		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
+		const ribbonIconEl = this.addRibbonIcon('dice', 'Obsidian CoPilot', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+			new Notice('Start of our plugin!');
 		});
 		// Perform additional things with the ribbon
 		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		statusBarItemEl.setText(`${ CoPilotViewType }`);
 
 		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
@@ -121,10 +134,10 @@ class SampleSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
+			.setName('OpenAI API Key')
+			.setDesc('Enter your OpenAI API Key from OpenAI.com')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
+				.setPlaceholder('Enter setting')
 				.setValue(this.plugin.settings.mySetting)
 				.onChange(async (value) => {
 					this.plugin.settings.mySetting = value;
