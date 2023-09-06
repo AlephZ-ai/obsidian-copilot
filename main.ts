@@ -1,7 +1,7 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, ItemView, WorkspaceLeaf } from "obsidian";
 
-const CoPilotViewType: string = "chat-view";
-const CoPilotViewDescription: string = "Chat";
+const CoPilotViewType = "chat-view";
+const CoPilotViewDescription = "Chat";
 
 class CoPilotView extends ItemView {
 	public getViewType(): string {
@@ -72,7 +72,7 @@ class CoPilotSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		let { containerEl } = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 

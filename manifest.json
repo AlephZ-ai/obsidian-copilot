@@ -5,7 +5,7 @@
 	"minAppVersion": "0.15.0",
 	"description": "This is a Microsoft CoPilot-like integration into Obsidian to aid in development of notes and links/tags. Utilizes GPT infrastructure for custom-tuned AI designed to function well with Obsidian.",
 	"author": "AlephZ.ai",
-	"authorUrl": "https://alepha.ai",
-	"fundingUrl": "https://alepha.ai",
+	"authorUrl": "https://alephz.ai",
+	"fundingUrl": "https://alephz.ai",
 	"isDesktopOnly": false
 }
