@@ -1,27 +1,16 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, ItemView, WorkspaceLeaf } from "obsidian";
+import axios from "axios";
 
-const CoPilotViewType = "chat-view";
 const CoPilotViewDescription = "Chat";
-
-class CoPilotView extends ItemView {
-	public getViewType(): string {
-		return CoPilotViewType;
-	}
-
-	public getDisplayText(): string {
-		return CoPilotViewDescription;
-	}
-}
-
 interface CoPilotChatSettings {
-	apiEndpoint: string;
+	apiKey: string;
 	defaultGreeting: string;
 	enableTimestamps: boolean;
 	chatTheme: "light" | "dark"; 
 }
 
 const DEFAULT_SETTINGS: CoPilotChatSettings = {
-	apiEndpoint: "https://api.openai.com/v1/engines/davinci-codex/completions",
+	apiKey: "",
 	defaultGreeting: "Hello, how can I help you today?",
 	enableTimestamps: true,
 	chatTheme: "dark"
@@ -29,40 +18,73 @@ const DEFAULT_SETTINGS: CoPilotChatSettings = {
 
 export default class MyPlugin extends Plugin {
 	settings: CoPilotChatSettings;
-	removeRibbonIcon: any;
-	deregisterView: any;
 
 	async onload() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-		this.deregisterView = this.registerView(CoPilotViewType, (leaf: WorkspaceLeaf) => new CoPilotView(leaf));
 		this.addSettingTab(new CoPilotSettingTab(this.app, this));
-		this.removeRibbonIcon = this.addRibbonIcon("message-circle", "Open Chat", async () => {
-			let leaf = this.app.workspace.getLeaf();
-			if (!leaf) {
-				leaf = this.app.workspace.getLeaf(true);
-			}
-			await leaf.setViewState({
-				type: CoPilotViewType
-			});
+		this.addRibbonIcon("message-circle", "Open Chat", () => {
+			this.toggleSidebar();
 		});
-		console.log("Plugin Loaded!");
+	console.log("Plugin Loaded!");
 	}
 
-		
+	toggleSidebar() {
+		const leaf = this.app.workspace.getRightLeaf(false);
+		if(leaf.view.getViewType() === 'chat-panel') {
+			leaf.setViewState({type: "empty"});
+		} else {
+			this.initializeSidebar();
+		}}
+
+	initializeSidebar() {
+		const leaf = this.app.workspace.getRightLeaf(true);
+		leaf.setViewState({
+			type: "chat-panel",
+		});
+		new CoPilotSidebar(this.app, leaf.view.containerEl, this.settings);
+	}
+
 	async onunload() {
-		if (this.removeRibbonIcon) {
-			this.removeRibbonIcon();
-		}
-		if (this.deregisterView) {
-			this.deregisterView();
-		}
 		await this.saveData(this.settings);
 		console.log("Plugin unloaded!")
 }
 	
 	async saveSettings() {
 		await this.saveData(this.settings);
-	}}
+	}
+}
+
+class CoPilotSidebar {
+	app: App;
+	container: HTMLElement;
+	messagesDiv: HTMLDivElement;
+	inputElement: HTMLInputElement;
+	chatHistory: HTMLElement;
+	settings: CoPilotChatSettings;
+
+	constructor (app: App, container: HTMLElement, settings: CoPilotChatSettings) {
+		this.app = app;
+		this.container = container;
+		this.settings = settings;
+		this.messagesDiv = this.container.createDiv({ cls: "messages" })
+		this.inputElement = this.container.createEl("input", { type: "text", placeholder: "Type your message..."}) as HTMLInputElement;
+		this.inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
+			if (event.code === "Enter") {
+				this.sendMessages(this.inputElement.value);
+				this.inputElement.value = "";
+			}
+		this.chatHistory = this.container.createEl("div", { "cls": "chat-history" });	
+		});
+	}
+
+	/// Ignore sendMessages (Incomplete)
+	async sendMessages(message: string) {
+		const userMessageDiv = this.chatHistory.createEl("div", { "cls": "user-message" });
+		userMessageDiv.setText("User: ${message}");
+		const apiEndpoint = "https://api.openai.com/v1/chat/completions"
+		const apiKey = this.settings.apiKey
+	}
+}
 class CoPilotSettingTab extends PluginSettingTab {
 	plugin: MyPlugin;
 
@@ -77,13 +99,13 @@ class CoPilotSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-		.setName ("API Endpoint")
-		.setDesc("Enter the API Endpoint for the chat.")
+		.setName ("API Key")
+		.setDesc("Enter your API Key from openai.com")
 		.addText(text => text
-			.setPlaceholder("Enter API Endpoint")
-			.setValue(this.plugin.settings.apiEndpoint)
+			.setPlaceholder("Enter API Key")
+			.setValue(this.plugin.settings.apiKey)
 			.onChange(async (value) => {
-				this.plugin.settings.apiEndpoint = value;
+				this.plugin.settings.apiKey = value;
 				await this.plugin.saveSettings();
 			}));
 		
