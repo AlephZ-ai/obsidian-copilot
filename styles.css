@@ -1,8 +1,9 @@
-/*
+.messages.light {
+	background-color: #ffffff;
+	color: #000000;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
-
-If your plugin does not need CSS, delete this file.
-
-*/
+.messages.dark {
+	background-color: #2c2c2c;
+	color: #ffffff;
+}
