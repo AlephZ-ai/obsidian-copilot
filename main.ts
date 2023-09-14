@@ -165,7 +165,6 @@ class CoPilotSidebar {
 				
 			} else {
 				console.error("GPT-3 response format was unexpected.")
-				return null;
 			}
 		} catch (error) {
 			console.error('Error fetching GPT response:', error);
