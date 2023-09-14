@@ -1,17 +1,22 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, ItemView, WorkspaceLeaf } from 'obsidian';
-import { axios } from 'axios'
+/* eslint-disable prefer-const */
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, ItemView, WorkspaceLeaf, TFile } from 'obsidian';
+import axios from 'axios'
+
+
 interface CoPilotChatSettings {
 	apiKey: string;
 	defaultGreeting: string;
 	enableTimestamps: boolean;
-	chatTheme: 'light' | 'dark'; 
+	chatTheme: 'light' | 'dark';
+	chatSessions: Array<Array<string>>; 
 }
 
 const DEFAULT_SETTINGS: CoPilotChatSettings = {
 	apiKey: '',
 	defaultGreeting: 'Hello, how can I help you today?',
 	enableTimestamps: true,
-	chatTheme: 'dark'
+	chatTheme: 'dark',
+	chatSessions: []
 };
 
 export default class MyPlugin extends Plugin {
@@ -19,6 +24,20 @@ export default class MyPlugin extends Plugin {
 	activeSidebar: CoPilotSidebar | null = null
 
 	async onload() {
+		const appInstance: App = this.app;
+		const activeMarkdownView = appInstance.workspace.getActiveViewOfType(MarkdownView);
+		if (activeMarkdownView) {
+			console.log("Active Markdown view found!");
+		} else {
+			console.log("No Active Markdown view found!");
+		}
+		const leaf = appInstance.workspace.getLeaf();
+		if (leaf) {
+		const fileToOpen = appInstance.vault.getAbstractFileByPath("path/to/your/file.md AUTOMATE")
+		if (fileToOpen instanceof TFile && fileToOpen.extension === "md") {
+		leaf.openFile(fileToOpen);
+	}
+}
 		this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() };
 		this.addSettingTab(new CoPilotSettingTab(this.app, this));
 		this.addRibbonIcon('message-circle', 'Open Chat', () => {
@@ -75,7 +94,8 @@ class CoPilotSidebar {
 		this.settings = settings;
 		this.plugin = plugin;
 		
-		this.chatSessions = []
+		this.chatHistory = this.container.createEl('div', { 'cls': 'chat-history' });
+		this.chatSessions = settings.chatSessions || [];
 		this.currentSession = []
 		this.sessionDropdown = this.container.createEl('select') as HTMLSelectElement;
 		const defaultOption = document.createEl('option');
@@ -85,6 +105,8 @@ class CoPilotSidebar {
 
 		this.sessionDropdown.addEventListener('change', ()=> {
 			this.loadChatSession(Number(this.sessionDropdown.value));
+		this.applyChatTheme();
+		this.displayDefaultGreeting();
 		});
 		
 		
@@ -92,18 +114,28 @@ class CoPilotSidebar {
 		this.inputElement = this.container.createEl('input', { type: 'text', placeholder: 'Type your message...'}) as HTMLInputElement;
 		this.inputElement.addEventListener('keydown', (event: KeyboardEvent) => {
 			if (event.code === 'Enter') {
-				this.sendMessages(this.inputElement.value);
+				this.handleEditorInteraction(this.inputElement.value);
 				this.inputElement.value = '';
-			}
-		this.chatHistory = this.container.createEl('div', { 'cls': 'chat-history' });	
+			}	
 		});
 	}
 
-	async sendMessages(message: string) {
+	async sendMessages(message: string): Promise<string | null> {
+		const timestamp = this.settings.enableTimestamps ? `[${this.getTimestamp()}]` : '';
 		const userMessageDiv = this.chatHistory.createEl('div', { 'cls': 'user-message' });
-		userMessageDiv.setText(`User: ${message}`);
+		userMessageDiv.setText(`${timestamp}User: ${message}`);
 		
-		const gptMessage = '';
+		const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (activeLeaf) {
+			const editor = activeLeaf.editor;
+			const selectedText = editor.getSelection();
+
+			if (selectedText) {
+				message = `${message} [Selected Text: ${selectedText}]`;
+			}
+		}
+
+		let gptMessage = '';
 		
 		const apiEndpoint = 'https://api.openai.com/v1/chat/completions'
 		const apiKey = this.settings.apiKey
@@ -123,16 +155,28 @@ class CoPilotSidebar {
 			if (response && response.data && response.data.choices && response.data.choices.length > 0) {
 				const gptMessage = response.data.choices[0].text.trim();
 
-				const gptMessageDiv = this.chatHistory.createEl('div', { 'cls': 'gpt-message' });
-				gptMessageDiv.setText(`GPT: ${gptMessage}` );
+				const gptMessageDiv = this.chatHistory.createEl('div', { 'cls': 'gpt-message' });	
+				gptMessageDiv.setText(`${timestamp}GPT: ${gptMessage}` );
 
 				this.currentSession.push(`User: ${message}`);
 				this.currentSession.push(`GPT: ${gptMessage}`);
+
+				return gptMessage;
+				
+			} else {
+				console.error("GPT-3 response format was unexpected.")
+				return null;
 			}
 		} catch (error) {
 			console.error('Error fetching GPT response:', error);
 
 			let errorMessage: string;
+				
+			if (error instanceof Error) {
+				errorMessage = error.message;
+			} else {
+				errorMessage = "An unexpected error occurred."
+			}
 
 			if (error.response) {
 				if (error.response.status === 429) {
@@ -154,6 +198,8 @@ class CoPilotSidebar {
 
 			const errorMessagediv = this.chatHistory.createEl('div', { 'cls': 'error-message' });
 			errorMessagediv.setText('Error: Failed to get a response')
+
+			return null;
 		}
 
 		this.currentSession.push(`User: ${message}`);
@@ -182,6 +228,9 @@ class CoPilotSidebar {
 			this.updateChatSessionDropdown();
 
 			this.currentSession = [];
+
+			this.plugin.settings.chatSessions = this.chatSessions;
+			this.plugin.saveSettings();
 		}
 	}
 
@@ -208,7 +257,52 @@ class CoPilotSidebar {
 		}
 	}
 
-}
+	displayDefaultGreeting() {
+		const greetingDiv = this.chatHistory.createEl('div', { 'cls': 'gpt-message' });
+		greetingDiv.setText(`GPT: ${this.settings.defaultGreeting}`);
+	}
+
+	getTimestamp(): string {
+		const date = new Date();
+		return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+	}
+
+	clearChatSessions() {
+		this.chatSessions = [];
+		this.currentSession = [];
+		this.updateChatSessionDropdown();
+		this.chatHistory.innerHTML = '';
+	}
+
+	async handleEditorInteraction(message: string) {
+		const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView);
+		
+		if (!activeLeaf) return;
+
+		const editor = activeLeaf.editor;
+		const selectedText = editor.getSelection();
+
+		let modifiedMessage = message;
+		
+		if (selectedText) {
+			modifiedMessage = `${message} [Selected Text: ${selectedText}]`;
+		}
+
+		const gptResponse = await this.sendMessages(modifiedMessage);
+
+		if (gptResponse) {
+
+		if (message.toLowerCase().includes("highlight")) {
+			editor.replaceSelection(`==${selectedText}==`);
+		} else if (message.toLowerCase().includes("replace") &&  gptResponse) {
+			editor.replaceSelection(gptResponse);
+		} else if (message.toLowerCase().includes("insert") && gptResponse) {
+			const cursorPosition = editor.getCursor();
+			editor.replaceRange(gptResponse, cursorPosition);
+		}
+
+		this.sendMessages(message);
+}}}
 class CoPilotSettingTab extends PluginSettingTab {
 	plugin: MyPlugin;
 
@@ -241,6 +335,10 @@ class CoPilotSettingTab extends PluginSettingTab {
 			.onChange(async (value) => {
 				this.plugin.settings.chatTheme = value as 'light' | 'dark';
 				await this.plugin.saveSettings();
+
+				if (this.plugin.activeSidebar) {
+					this.plugin.activeSidebar.applyChatTheme();
+				}
 			})
 		);
 		
@@ -263,6 +361,21 @@ class CoPilotSettingTab extends PluginSettingTab {
 			.onChange(async (value) => {
 				this.plugin.settings.enableTimestamps = value;
 				await this.plugin.saveSettings();
+			}));
+
+		new Setting(containerEl)
+		.setName('Clear Chat Sessions')
+		.setDesc('Clear all saved chat sessions')
+		.addButton(button => button
+			.setButtonText('Clear Sessions')
+			.onClick(async () => {
+				if (this.plugin.activeSidebar) {
+					this.plugin.activeSidebar.clearChatSessions();
+				}
+				this.plugin.settings.chatSessions = [];
+				await this.plugin.saveSettings();
+
+				new Notice('All saved chat sessions have been cleared');
 			}));
 			console.log('Settings Loaded!');
 	}
