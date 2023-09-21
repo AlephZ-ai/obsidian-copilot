@@ -2,7 +2,6 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, ItemView, WorkspaceLeaf, TFile } from 'obsidian';
 import axios from 'axios'
 
-
 interface CoPilotChatSettings {
 	apiKey: string;
 	defaultGreeting: string;
@@ -22,8 +21,14 @@ const DEFAULT_SETTINGS: CoPilotChatSettings = {
 export default class MyPlugin extends Plugin {
 	settings: CoPilotChatSettings;
 	activeSidebar: CoPilotSidebar | null = null
+	chatViewType = 'chat-panel'
 
 	async onload() {
+		await this.loadPlugin();
+		console.log('Plugin Loaded!');
+	}
+
+	async loadPlugin() {
 		const appInstance: App = this.app;
 		const activeMarkdownView = appInstance.workspace.getActiveViewOfType(MarkdownView);
 		if (activeMarkdownView) {
@@ -31,39 +36,90 @@ export default class MyPlugin extends Plugin {
 		} else {
 			console.log("No Active Markdown view found!");
 		}
-		const leaf = appInstance.workspace.getLeaf();
-		if (leaf) {
-		const fileToOpen = appInstance.vault.getAbstractFileByPath("path/to/your/file.md AUTOMATE")
-		if (fileToOpen instanceof TFile && fileToOpen.extension === "md") {
-		leaf.openFile(fileToOpen);
-	}
-}
+		const mdFiles = appInstance.vault.getMarkdownFiles();
+
+		if (!mdFiles || mdFiles.length === 0) {
+			console.error("No markdown files found.");
+			return;
+		}
+
+		mdFiles.forEach(file => {
+			if (file instanceof TFile) {
+				const leaf = appInstance.workspace.getLeaf(true);
+				leaf.openFile(file);
+			}
+		});
 		this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() };
 		this.addSettingTab(new CoPilotSettingTab(this.app, this));
 		this.addRibbonIcon('message-circle', 'Open Chat', () => {
 			this.toggleSidebar();});
-	console.log('Plugin Loaded!');
 	}
 
 	toggleSidebar() {
-		const leaf = this.app.workspace.getRightLeaf(false);
-		if(leaf.view.getViewType() === 'chat-panel') {
-			if (this.activeSidebar) {
-				this.activeSidebar.saveCurrentSession();
+		let found = false;
+		this.app.workspace.iterateAllLeaves(leaf => {
+			if (leaf.view.getViewType() === this.chatViewType) {
+				found = true;
+				this.app.workspace.detachLeavesOfType(this.chatViewType);
 			}
-			leaf.setViewState({type: 'empty'});
-		} else {
+		});
+		if (!found) {
 			this.initializeSidebar();
-		}}
+		}
+	}
 
 	initializeSidebar() {
-		const leaf = this.app.workspace.getRightLeaf(true);
-		leaf.setViewState({
-			type: 'chat-panel',
+		let existingLeaf = this.app.workspace.getLeavesOfType(this.chatViewType)[0];
+	
+		if (!existingLeaf) {
+			// Aim for the right sidebar. 
+			let rightSidebar = this.app.workspace.getRightLeaf(false); 
+	
+			if (rightSidebar) {
+				rightSidebar.setViewState({
+					type: this.chatViewType,
+					active: true,
+				});
+				existingLeaf = rightSidebar;
+			} else {
+				// If for some reason you couldn't get the right leaf, then proceed with the original method.
+				let activeLeaf = this.app.workspace.getLeaf();
+				
+				if (activeLeaf) {
+					existingLeaf = this.app.workspace.createLeafBySplit(activeLeaf, 'vertical');
+					existingLeaf.setViewState({
+						type: this.chatViewType,
+						active: true,
+					});
+				} else {
+					console.error("Unable to retrieve or create a new leaf.");
+					return;
+				}
+			}
+		}
+		if (existingLeaf.view instanceof CoPilotSidebar) {
+			this.activeSidebar = existingLeaf.view as CoPilotSidebar;
+		} else {
+			this.activeSidebar = new CoPilotSidebar(this.app, existingLeaf, existingLeaf.view.containerEl, this.settings, this);
+			existingLeaf.setViewState({
+				type: this.chatViewType,
+				active: true,
+			});
+		}
+		this.activeSidebar.containerEl.addEventListener('click', function() {
+			console.log("Sidebar initialized");
 		});
-		
-		this.activeSidebar = new CoPilotSidebar(this.app, leaf.view.containerEl, this.settings, this);
-		
+	
+		if (existingLeaf.view instanceof CoPilotSidebar) {
+			this.activeSidebar = existingLeaf.view as CoPilotSidebar;
+		} else {
+			this.activeSidebar = new CoPilotSidebar(this.app, existingLeaf, existingLeaf.view.containerEl, this.settings, this);
+			existingLeaf.setViewState({
+				type: this.chatViewType,
+				active: true,
+			});
+		}
+		console.log('Sidebar Initialized');
 	}
 
 	async onunload() {
@@ -76,47 +132,83 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class CoPilotSidebar {
+class CoPilotSidebar extends ItemView {
+	public static VIEW_TYPE = 'copilot';
 	app: App;
-	container: HTMLElement;
+	contentEl: HTMLElement;
 	messagesDiv: HTMLDivElement;
-	inputElement: HTMLInputElement;
+	searchInput: HTMLInputElement;
+	messageInput: HTMLInputElement;
 	chatHistory: HTMLElement;
 	settings: CoPilotChatSettings;
 	chatSessions: Array<Array<string>>;
 	currentSession: Array<string>;
 	sessionDropdown: HTMLSelectElement;
 	plugin: MyPlugin;
+	itemList: Array<string>;
+	filteredList: Array<string>;
 
-	constructor (app: App, container: HTMLElement, settings: CoPilotChatSettings, plugin: MyPlugin) {
+	constructor (app: App, leaf: WorkspaceLeaf, container: HTMLElement, settings: CoPilotChatSettings, plugin: MyPlugin) {
+		super(leaf);
 		this.app = app;
-		this.container = container;
 		this.settings = settings;
 		this.plugin = plugin;
+		let contentEl = container.querySelector('#copilot-sidebar-content') as HTMLElement;
+		if (!contentEl) {
+			contentEl = container.createDiv();
+			contentEl.id = 'copilot-sidebar-content'; 
+		}
+		this.contentEl = contentEl;
 		
-		this.chatHistory = this.container.createEl('div', { 'cls': 'chat-history' });
+        this.itemList = ["example1", "example2", "example3"];
+        this.filteredList = this.itemList.slice(); 
+		
+		this.contentEl.innerHTML = "";
+		const mainWrapperDiv = this.contentEl.createEl('div', { 'cls': 'copilot-main-wrapper' });
+
+		mainWrapperDiv.createEl('h2', { 'cls': 'copilot-title'}).innerText = "CoPilot";
+
+		this.chatHistory = mainWrapperDiv.createEl('div', { 'cls': 'chat-history' });
 		this.chatSessions = settings.chatSessions || [];
 		this.currentSession = []
-		this.sessionDropdown = this.container.createEl('select') as HTMLSelectElement;
+		this.sessionDropdown = mainWrapperDiv.createEl('select') as HTMLSelectElement;
 		const defaultOption = document.createEl('option');
 		defaultOption.value = '-1'
 		defaultOption.text = 'Choose Previous Chat Session';
+		console.log('Appending element to sessionDropdown');
 		this.sessionDropdown.appendChild(defaultOption);
-
 		this.sessionDropdown.addEventListener('change', ()=> {
 			this.loadChatSession(Number(this.sessionDropdown.value));
 		this.applyChatTheme();
 		this.displayDefaultGreeting();
 		});
 		
-		
-		this.messagesDiv = this.container.createDiv({ cls: 'messages' })
-		this.inputElement = this.container.createEl('input', { type: 'text', placeholder: 'Type your message...'}) as HTMLInputElement;
-		this.inputElement.addEventListener('keydown', (event: KeyboardEvent) => {
+		const searchBarDiv = mainWrapperDiv.createEl('div', { 'cls': 'copilot-search-wrapper' });
+		this.searchInput = searchBarDiv.createEl('input', { 'cls': 'copilot-search-input' }) as HTMLInputElement;
+        this.searchInput.placeholder = "Search...";
+		if (!this.searchInput) {
+			throw new Error("#copilot-sidebar-search not found in the DOM or is not an input element");
+		}
+		if (this.searchInput) {
+            this.searchInput.addEventListener('input', this.handleSearchInputChange.bind(this));
+
+		}
+
+		this.messagesDiv = this.contentEl.createDiv({ cls: 'messages' })
+		this.messageInput = this.contentEl.createEl('input', { type: 'text', placeholder: 'Type your message...'}) as HTMLInputElement;
+		this.messageInput.addEventListener('input', this.handleSearchInputChange.bind(this));
+		this.messageInput.addEventListener('keydown', (event: KeyboardEvent) => {
 			if (event.code === 'Enter') {
-				this.handleEditorInteraction(this.inputElement.value);
-				this.inputElement.value = '';
+				this.handleEditorInteraction(this.messageInput.value);
+				this.messageInput.value = '';
 			}	
+		});
+
+		const clearChatButton = mainWrapperDiv.createEl('button', { 'cls': 'clear-chat-button' });
+		clearChatButton.innerText = "Clear Chat Sessions";
+		clearChatButton.addEventListener('click', () => {
+		this.clearChatSessions();
+		this.displayDefaultGreeting()
 		});
 	}
 
@@ -151,6 +243,7 @@ class CoPilotSidebar {
 		};
 
 		try {
+			
 			const response = await axios.post(apiEndpoint, body, { headers: headers });
 			if (response && response.data && response.data.choices && response.data.choices.length > 0) {
 				const gptMessage = response.data.choices[0].text.trim();
@@ -168,7 +261,7 @@ class CoPilotSidebar {
 			}
 		} catch (error) {
 			console.error('Error fetching GPT response:', error);
-
+			console.error('Error occurred at a specific block:', error);
 			let errorMessage: string;
 				
 			if (error instanceof Error) {
@@ -203,7 +296,10 @@ class CoPilotSidebar {
 
 		this.currentSession.push(`User: ${message}`);
 		this.currentSession.push(`GPT: ${gptMessage}`);
+
+		return null;
 	}
+	
 	
 	loadChatSession(SelectedIndex: number) {
 		if (SelectedIndex >= 0 && SelectedIndex < this.chatSessions.length) {
@@ -214,6 +310,14 @@ class CoPilotSidebar {
 				messageDiv.textContent = message;
 			});
 		}
+	}
+
+	getViewType(): string {
+		return CoPilotSidebar.VIEW_TYPE;
+	}
+
+	getDisplayText(): string {
+		return 'CoPilot';
 	}
 
 	saveCurrentSession() {
@@ -241,6 +345,7 @@ class CoPilotSidebar {
 			const option = document.createElement('option');
 			option.value = index.toString();
 			option.text = `Chat Session ${index + 1}`;
+			console.log('Appending element to update sessionDropdown');
 			this.sessionDropdown.appendChild(option);
 		})
 	}
@@ -272,6 +377,30 @@ class CoPilotSidebar {
 		this.updateChatSessionDropdown();
 		this.chatHistory.innerHTML = '';
 	}
+
+    handleSearchInputChange(event: Event) {
+        if (!this.searchInput) {
+            return;
+        }
+        const query = this.searchInput.value.toLowerCase();
+        this.filteredList = this.itemList.filter(item => item.toLowerCase().includes(query));
+        this.renderFilteredList();
+	}
+
+	renderFilteredList() {
+        if (!this.contentEl) {
+            return;
+        }
+
+        this.contentEl.innerHTML = "";
+
+        this.filteredList.forEach(item => {
+            const itemEl = document.createElement('div');
+            itemEl.textContent = item;
+			console.log('Appending element to contentEl');
+            this.contentEl.appendChild(itemEl);
+        });
+    }
 
 	async handleEditorInteraction(message: string) {
 		const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -311,7 +440,7 @@ class CoPilotSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		const { containerEl } = this;
+		const containerEl = this.containerEl;
 
 		new Setting(containerEl)
 		.setName ('API Key')
